@@ -1,0 +1,1604 @@
+---
+title: "Trabajo Práctico de Métodos Matemáticos y Numéricos"
+subtitle: "Resolución de Ecuaciones Diferenciales Ordinarias: Erupción del Volcán Calbuco "
+author: "Ignacio Santamaria"
+output: github_document
+---
+
+# Modelado
+
+Se realiza el modelado de la dispersión de contaminantes en el aire a travez de la Teoría de la Difusión. Siendo C la concentración media de cenizas en el punto M (x, y, z), y u, v, w los componentes de la velocidad. Además, a partir de ser un foco puntual de contaminante, se emplea el Modelo de Pluma Gaussiana para la dispersión.
+
+En el presente trabajo se busca conocer el perfil de la concentración del flujo piroclástico que contiene las cenizas proyectadas por el volcán con la simplificación del modelo a un estado estacionario (se elimina la variación respecto del tiempo) y a una dimensión, utilizando para ello la dirección del viento.
+
+En esta situación, la ecuación diferencial que permite calcular la concentración de cenizas en el aire en función de la distancia es: 
+
+$$U\frac{dC}{dx}=D\frac{d^{2}C}{dx^{2}}-KC$$
+
+Donde:
+U: velocidad del viento a la altura de la pluma en la dirección de la dispersión.
+D: parámetro de la turbulencia de las cenizas en la pluma.
+K: constante de decaimiento.
+
+***
+
+# Desarrollo del Práctico
+
+El esquema resultante es un problema de valores de contorno. El mismo se resolverá utilizando esquemas de valores iniciales imponiendo una derivada primera al origen. 
+
+*DATOS:*
+U: Velocidad del viento: 69 km/h
+D: factor de turbulencia: 0,14
+K: constante de decaimiento: 10
+x0: 0 m
+C0 (concentración de cenizas en x0): 1000000 mg/m3
+C’0 (derivada de la concentración de cenizas en x0): -1000 mg/m3km
+
+*Otros datos:*
+Altura del cráter del volcán: 2003 m (sobre nivel del mar)
+Altura de la proyección de las cenizas: 15000 m
+Cantidad promedio de cenizas proyectadas por día: 100 millones m3
+Diámetro superior del hongo: 2000 m 
+
+***
+
+## Conversión de la ecuación diferencial de segundo orden en un sistema de ecuaciones diferenciales de primer orden.
+
+A partir de la ecuación diferencial de segundo orden (lineal), se despeja la derivada segunda de la concentración:
+
+$$\frac{d^{2}C}{dx^{2}}=\frac{U}{D}\frac{dC}{dx}+\frac{K}{D}C$$
+
+Llamando C=u, y aplicando el cambio de variables:
+
+$$u'= \frac{dC}{dx} = v$$
+$$v' = \frac{d^{2}C}{dx^{2}} = \frac{U}{D}v+\frac{K}{D}u$$
+
+Obtenemos un sistema de dos ecuaciones diferenciales de primer orden (lineales).
+
+$$u' = f(x, u, v)$$
+$$v' = g(x, u, v)$$
+
+Quedando un problema de valores iniciales (PVI):
+
+$$u(x=0)=C_0=1000000 mg/m^{3}$$
+$$v(x=0)=C'_0=-1000 mg/m^{3}km$$
+
+***
+
+## 1) Discretizar el problema utilizando el método de Euler implícito.
+
+Discretización (Euler Implícito).
+
+$$u_{n+1}=u_n + h*f(x_{n+1}; u_{n+1}; v_{n+1})$$
+$$v_{n+1}=v_n + h*g(x_{n+1}; u_{n+1}; v_{n+1})$$
+
+Por lo tanto:
+
+$$u_{n+1}=u_n + h*v_{n+1}$$
+$$v_{n+1}=v_n + h*(\frac{U}{D}v_{n+1}+\frac{K}{D}u_{n+1})$$
+
+Siendo que las ecuaciones son lineales, se lo puede reordenar para convertirlo a explícito, obteniendo el siguiente sistema de ecuaciones lineales (SEL):
+
+$$-u_n=-u_{n+1}+h*v_{n+1}$$
+$$-v_n=h\frac{K}{D}*u_{n+1}+(h\frac{U}{D}-1)*v_{n+1}$$
+
+En forma matricial queda (Ax=b):
+
+$$
+\left(\begin{array}{cc} 
+-1 & h\\
+h\frac{K}{D} & (h\frac{U}{D}-1)
+\end{array}\right)
+\left(\begin{array}{cc} 
+u_{n+1} \\ 
+v_{n+1} 
+\end{array}\right)
+=
+\left(\begin{array}{cc} 
+-u_{n} \\ 
+-v_{n} 
+\end{array}\right)
+$$
+Por cada avance que se quiera calcular mediante Euler Implícito, se deberá resolver este SEL.
+
+
+## 2) Resolver el problema con un paso adecuado hasta alcanzar una concentración de cenizas menor a 0,1 mg/m3. Informar la distancia. 
+
+Dado que, teóricamente, el método de Euler Implícito es un incondicionalmente estable, sin importar que paso se tome, se supone que siempre habrá una reducción asintótica del error de truncamiento local en cada avance. Sin embargo, como se sigue cumpliendo que el error será proporcional al paso elevado el orden de precisión, cuanto menor sea este paso, mejor será la precisión de la estimación de la función (concentración de cenizas).
+
+Para comprobar empíricamente este conocimiento teórico de que este método es incondicionalmente estable, más adelante aumentaremos sucesivamente el paso h con tal de observar gráficamente que el mismo se mantiene estable.
+
+Además, el paso que vamos a tomar debe ser útil desde un punto de vista de práctico, es decir de la utilidad del resultado obtenido. Si tomamos un paso muy grande, va a haber muchas posiciones donde desconozcamos la concentración de cenizas, en cambio, si tomamos uno muy chico, puede que estemos haciendo un esfuerzo de cálculo muy grande y enrealidad no necesitamos la concentración cada un paso espacial tan pequeño. A partir de este análisis, elegimos tomar un paso de 1 kilómetro, por los posibles fines prácticos de este:
+```{r}
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+
+#Para resolver el SEL (Ax=b) usamos Eliminación Gaussiana CON pivoteo parcial:
+A <- matrix(c(-1, h, h*(K/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+print(A) #matriz de coeficientes
+```
+
+```{r}
+#Pivoteo parcial con fin de reducir el valor del multiplicador al aumentar el elemento de la diagonal
+fila <- A[1,]
+A[1,] <- A[2,]
+A[2,] <- fila
+
+m21 <- A[2,1]/A[1,1] # multiplicador
+A[2,] <- A[2,]-m21*A[1,]
+
+# debido a que hay que resolver sucesivamente SEL con la misma matriz A y diferentes b, usamos una descomposición LU de Doolittle para facilitar el cálculo. (A=LU)
+Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+Upper <- A
+print("Matriz L:", quote = FALSE)
+Lower
+print("Matriz U:", quote = FALSE)
+Upper
+```
+
+```{r}
+n <- 0 #cantidad de avances
+C_calculadas <- c(C)
+C_prima_calculadas <- c(C_prima)
+x_calculadas <- c(x)
+
+while (C >= 0.1){ #avanzamos hasta que C sea menor a 0,1 mg/m3
+  b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+  
+  #intercambio de filas para b del pivoteo parcial
+  fila <- b[1,]
+  b[1,] <- b[2,]
+  b[2,] <- fila
+  
+  #sistema Ly=b
+  vector_y <- matrix(c(b[1,], # y1
+                     b[2,]-Lower[2,1]*b[1,]), # y2
+                     nrow = 2, ncol = 1, byrow = TRUE)
+  #Sistema Ux=y
+  vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                       vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                       nrow = 2, ncol = 1, byrow = TRUE)
+  
+  #Valores de la concentración de cenizas y de su derivada en la posición x
+  x <- x+h
+  n <- n+1
+  C <- vector_x[1,]
+  C_prima <- vector_x[2,]
+  
+  #Guardo los valores calculados en vectores:
+  C_calculadas <- c(C_calculadas, C)
+  C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+  x_calculadas <- c(x_calculadas, x)
+}
+```
+
+Por lo tanto:
+```{r}
+paste("Se alcanza una concentración de cenizas menor a los 0,1 mg/m3 a los", x, "kilómetros del volcán (distancia medida en dirección a la velocidad del viento).")
+```
+
+Graficamos la *concentración de cenizas en función de la posición x (en dirección de la velocidad del viento)*:
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+ggplot(data.frame("Posición"=x_calculadas, "Concentración_de_cenizas"=C_calculadas), aes(x=Posición, y=Concentración_de_cenizas)) +
+  geom_point(color="blue", shape=1)
+```
+
+Graficamos la *derivada de la concentración de cenizas en función de la posición x*:
+```{r message=FALSE, warning=FALSE}
+ggplot(data.frame("Posición"=x_calculadas, "Derivada_de_la_concentración"=C_prima_calculadas), aes(x=Posición, y=Derivada_de_la_concentración)) +
+  geom_point(color="blue", shape=3)
+```
+
+
+
+Ahora vamos a comprobar empiricamente que el método de Euler Implícito se mantiene estable aunque aumentemos el paso h. Para esto, vamos a calcular sucesivos avances para la concentración de cenizas, con distintos pasos, y luego graficarlos. En este caso, vamos a comenzar con un paso de 2km, aumentando de a dos, para finalizar con un paso de 10km.
+
+```{r}
+C_x_dist_h <- list() #armo una lista de listas
+
+for (i in seq(2, 10, by = 2)){ # vamos aumentando el paso de a 2 km (a partir de 0)
+  h <- i
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  # repito el procedimiento con un h general
+  A <- matrix(c(-1, h, h*(K/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  fila <- A[1,]
+  A[1,] <- A[2,]
+  A[2,] <- fila
+  m21 <- A[2,1]/A[1,1]
+  A[2,] <- A[2,]-m21*A[1,]
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  
+  while (C >= 0.1){ #avanzamos hasta que C sea menor a 0,1 mg/m3
+    b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+  
+    #intercambio de filas para b del pivoteo parcial
+    fila <- b[1,]
+    b[1,] <- b[2,]
+    b[2,] <- fila
+    
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    #Guardo los valores calculados en vectores:
+    C_calculadas <- c(C_calculadas, C)
+    C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+    x_calculadas <- c(x_calculadas, x)
+  }
+  C_x_dist_h[[length(C_x_dist_h) + 1]] <- list("Posición"=x_calculadas, "Concentración_de_cenizas"=C_calculadas)
+  # vamos guardando en esta lista los avances calculados con distintos h
+}
+```
+
+
+Graficamos para poder comparar los resultados obtenidos según cada paso utilizado:
+```{r}
+# Graficando:
+plot(C_x_dist_h[[1]]$Posición, C_x_dist_h[[1]]$Concentración_de_cenizas, col="blue",
+     xlab="Posición", ylab="Concentración de Cenizas", 
+     main="Comparación de cálculo de C para distintos pasos h")
+points(C_x_dist_h[[2]]$Posición, C_x_dist_h[[2]]$Concentración_de_cenizas, col="green")
+points(C_x_dist_h[[3]]$Posición, C_x_dist_h[[3]]$Concentración_de_cenizas, col="orange")
+points(C_x_dist_h[[4]]$Posición, C_x_dist_h[[4]]$Concentración_de_cenizas, col="black")
+points(C_x_dist_h[[5]]$Posición, C_x_dist_h[[5]]$Concentración_de_cenizas, col="red")
+legend("topright", 
+  legend = c("h=2", "h=4", "h=6", "h=8", "h=10"),
+  col = c("blue" ,"green", "orange", "black", "red"), 
+  pch = c(1, 1, 1, 1, 1))
+```
+
+Como podemos observar en el gráfico, obtuvimos que aunque hayamos aumentado el paso 10 veces comparado al calculado al principio, el **resultado numérico se mantuvo estable**. Es decir, no se observan resultados erráticos a pesar de que aumentamos mucho el paso de cálculo, *tal cual debe suceder según nuestros conocimientos de que el método de Euler Implicito es incondicionalmente estable*.
+
+Cabe aclarar que también se observa que *se cumple que el error aumenta proporcional al paso elevado al orden de precisión (1 para Euler Implícito)*. Ya que a medida que aumenta el paso de cálculo h, vemos que los puntos se van alejando de la estimación con menor error graficada (que seria h=2km, la de menor paso en este caso), siendo los puntos rojos (h=10km, los de mayor paso) los más alejados porque el mayor paso generó un mayor error.
+
+Vemos que, como el método es estable sin importar el h, al ir avanzando en el cálculo, en posiciónes mayores a 40km ya empiezan a converger los puntos calculados con distintos h. Esto es a que *a causa de la estabilidad, hay un disminución asintótica del error local de truncamiento*, lo cual habiamos predecido teóricamente.
+
+
+
+## 3) Reducir el paso de cálculo hasta lograr un error menor al 1%.
+
+Para poder calcular el error exacto deberíamos obtener la solución analítica de esta ecuación diferencial. Sin embargo, con el fin de hacerlo mediante una resolución únicamente numérica, vamos a calcular la concentración de cenizas en x=1 km mediante un paso h muy pequeño, con el fin de poder considerar este resultado como aproximadamente igual al resultado analítico y asi luego calcular una estimación del error  (aún así más adelante sí vamos a calcular la solución analítica para mejor comprensión del problema). De esta forma vamos a obtener para qué paso de cálculo h se logra un error (relativo) menor al 1%.
+
+Cabe aclarar que otra forma de hacer esto podría ser calcular la concentración mediante un método de mayor orden de precisión que Euler Implícito (orden 1), por ejemplo Runge-Kutta (orden 2 o orden 4). Y considerar que este resultado es aproximadamente la solución analítica (en comparación al de Euler) y así poder calcular el error.
+
+Optando por la primer forma numérica mencionada, calculamos el valor de C(x=1km) con un paso de cálculo de h=0,001 km, es decir, un paso 100 veces menor al primero calculado. Cabe aclarar que con este h no sería bueno realizar pivoteo parcial, por lo que aplicamos eliminacion gaussiana sin pivoteo para resolver los sucesivos SEL.
+```{r}
+h <- 0.01
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+
+A <- matrix(c(-1, h, h*(K/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+m21 <- A[2,1]/A[1,1]
+A[2,] <- A[2,]-m21*A[1,]
+Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+Upper <- A
+
+n <- 0 #cantidad de avances
+C_calculadas <- c(C)
+C_prima_calculadas <- c(C_prima)
+x_calculadas <- c(x)
+
+while (x<1){
+    b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    C_exacta <- C
+}
+paste("A los", x,"km se alcanza una concentración de cenizas de C(x=1km)=", C_exacta, "mg/m3. Valor calculado con un paso de h = 0,01 km.")
+```
+
+Ahora vamos a considerar como aproximadamente exacto este valor de C(x=1km), y a utilizarlo para calcular el error relativo con distintos pasos de cálculo, comenzando con un paso de 1 km y reduciendolo a la mitad en cada iteración. Hasta hallar el paso h que permita un error relativo menor al 1%:
+```{r}
+h <- 1
+pasos_utilizados <- c(NA)
+C_obtenidos_dist_h <- c(NA)
+error_abs_obtenido_dist_h <- c(NA)
+error_rel_obtenido_dist_h <- c(NA)
+error_rel <- 100
+while (error_rel >= 1) {
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  A <- matrix(c(-1, h, h*(K/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  m21 <- A[2,1]/A[1,1]
+  A[2,] <- A[2,]-m21*A[1,]
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  while (x<1){
+    b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    error_abs <- abs(C-C_exacta)
+    error_rel <- (error_abs/C)*100
+  }
+  pasos_utilizados <- c(pasos_utilizados, h)
+  C_obtenidos_dist_h <- c(C_obtenidos_dist_h, C)
+  error_abs_obtenido_dist_h <- c(error_abs_obtenido_dist_h, error_abs)
+  error_rel_obtenido_dist_h <- c(error_rel_obtenido_dist_h, error_rel)
+  h <- h/2
+}
+data.frame("Paso h utilizado"= pasos_utilizados, "C a 1km"= C_obtenidos_dist_h, "Error absoluto de C"= error_abs_obtenido_dist_h, "Error relativo de C (%)"= error_rel_obtenido_dist_h)
+```
+
+Por lo tanto, **mediante Euler Implícito, con un paso de cálculo de h = 0,25 km se consigue un error relativo (estimado) de aproximadamente 0,75% (menor al 1%)**.
+
+
+
+## 4) Calibrar el coeficiente de decaimiento (K) del modelo para lograr una concentración de cenizas a 100 km del volcán de 0,07 mg/m3.
+
+Dada una concentración de cenizas de 0,07 mg/m3 a los 100km del volcán, lo cual consideramos que habrá sido una medición real en esa posición, vamos a probar distintos valores de K al calcular la C(x=100km). Con el fin de hayar el K calibrado a partir del dato real, y así tener un coeficiente de decaimiento que se aproximará más al real. Para el cálculo de la concentración vamos a utilizar h=1km.
+
+```{r}
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+# NO uso la K dada de dato
+C <- 1000000
+
+K_calib_EI <- 0 #inicializo la cte de decaimiento calibrada con Euler Implícito
+
+while (round(C, digits = 2) != 0.07) {
+  K_calib_EI <- K_calib_EI+0.001
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  C_calculadas_Kcalib_EI <- c(C)
+  x_calculadas_Kcalib_EI <- c(x)
+
+  #Eliminación Gaussiana sin pivoteo parcial:
+  A <- matrix(c(-1, h, h*(K_calib_EI/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  m21 <- A[2,1]/A[1,1] # multiplicador
+  A[2,] <- A[2,]-m21*A[1,]
+  #Descomposición LU de Doolittle (A=LU)
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  for (x in 1:100) { # calculo C(x=100km)
+    b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    C_calculadas_Kcalib_EI <- c(C_calculadas_Kcalib_EI, C)
+    x_calculadas_Kcalib_EI <- c(x_calculadas_Kcalib_EI, x)
+  }
+  if (K_calib_EI > 100){
+    break
+  }
+}
+```
+
+```{r}
+paste("A partir de la iteración, se obtuvo que con un coeficiente de decaimiento de ", K_calib_EI, "se obtiene, mediante Euler Implícito, una concentración de cenizas de aproximadamente ", round(C, digits = 2), "mg/m3 a los 100km.")
+```
+
+Por lo tanto, **K calibrado por Euler implícito es de aproximadamente 6,96**. Observamos que da un *valor menor al dado como dato (estimativo) de K=10*, pero del mismo orden de magnitud. Con este K calibrado se puede obtener una estimación más precisa de la concentración de ceniza a lo largo del espacio. A continuación, podemos observar el gráfico de la concentración de ceniza en función a la posición hasta los 100km, utilizando K aprox. = 6,96:
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+ggplot(data.frame("Posición"=x_calculadas_Kcalib_EI, "Concentración_de_cenizas"=C_calculadas_Kcalib_EI), aes(x=Posición, y=Concentración_de_cenizas)) +
+  geom_point(color="blue", shape=1)
+```
+
+
+***
+
+## Solución analítica
+
+Antes de continuar con los calculos numéricos, vamos a calcular la solución analítica de la ecuación diferencial, con el fin de poder hacer un mejor análisis de los resultados numéricos.
+
+$$D*\frac{d^{2}C}{dx^{2}}-U*\frac{dC}{dx}-K*C=0$$
+
+Proponemos la solución: $C=e^{\alpha x}$  
+
+Esto da: $C'=\alpha*e^{\alpha x}$ y $C''=\alpha^{2}*e^{\alpha x}$
+
+Reemplazando en la ecuación: $D\alpha^{2}*e^{\alpha x}-U\alpha*e^{\alpha x}-K*e^{\alpha x}=0$
+
+=> $e^{\alpha x}*(D\alpha^{2}-U\alpha-K)=0$
+
+Y siendo que factor de la izquierda es distinto de cero: $D\alpha^{2}-U\alpha-K=0$
+
+Usando el K=10 (dato original), tenemos que:
+
+$\alpha_1=278,8276032$ y $\alpha_2=-0,2561746778$
+
+Entonces:
+
+$C=\beta_1*e^{278,8276032*x}+\beta_2*e^{-0,2561746778*x}$
+
+Condiciones iniciales:
+
+$C(x=0)= 1000000 = \beta_1 + \beta_2$
+
+$C'(x=0)= -1000 =278,8276032*\beta_1-0,2561746778*\beta_2$
+
+Resolviendo este sistema y reemplazando las constantes en la solución:
+
+$C(x)=914,33*e^{278,8276032*x}+999085,67*e^{-0,2561746778*x}$
+
+Como podemos observar, la solución analítica está conformada por dos términos con dos funciones exponenciales. Donde la constante llamada alfa (en el exponente) *en el primer término es muy grande*, comparada con la alfa *en el segundo término que es muy pequeña*. Si calculamos la derivada primera y segunda de esta función, nos queda:
+
+$\frac{dC(x)}{dx}=254940,4424*e^{278,8276032*x}-255940,4496*e^{-0,2561746778*x}$
+
+$\frac{d^{2}C(x)}{dx^{2}}=71084432,52*e^{278,8276032*x}+65565,46221*e^{-0,2561746778*x}$
+
+Ahora podemos ver, que por culpa de la gran magnitud del alfa del primer término. *En la derivada segunda, la exponencial del dicho término queda multiplicada por un número muy grande*.
+
+A partir de este análisis y observando la ecuación diferencial original, donde el D=0,14 que multiplica la derivada segunda es mucho más chico que el U que multiplica a la derivada primera y el K que multiplica a la función. Podemos decir que el problema presenta *características de una ecuación rígida*. En donde la componente de variación rápida (la de la derivada segunda) hará que la función solución se comporte de manera abrupta en un pequeño intervalo de las x, y luego tomará preponderancia la componente lenta de la ecuación, y entonces, la solución se comportará de manera más suave. sin embargo, esto no quiere decir que sea un problema totalmente rígido pero sí posee características de uno.
+
+Como ya se habló, el primer término de la solución que tiene un alfa muy grande, correspondería a la componente rápida de la solución. Mientras que el segundo término, con un alfa pequeño, correspondería a la componente lenta.
+
+Al intentar gráficar la función solución con ambos términos, observamos que la misma toma valores demasiado grandes:
+```{r}
+C <- 1000000
+C_prima <- -1000
+x<-0
+alfa_1 <- 278.8276032
+alfa_2 <- -0.2561746778
+beta_1 <- 914.33
+beta_2 <- 999085.67
+
+x_analitica <- c(x)
+C_analitica_2terminos <- c(C)
+
+for (x in seq(0.1, 100, by = 0.1)) {
+  C <- beta_1*exp(alfa_1*x)+beta_2*exp(alfa_2*x) #grafico ambos términos
+  C_analitica_2terminos <- c(C_analitica_2terminos, C)
+  x_analitica <- c(x_analitica, x)
+}
+plot(x_analitica, C_analitica_2terminos, col = "red", main = "Solución analítica con ambos términos")
+```
+
+Sin embargo, al graficar *solo el segundo término (con constante alfa pequeña), correspondiente a la componente de variación lenta*, observamos que *se acerca mucho tanto a lo obtenido numéricamente, como a lo esperado para este fenómeno de dispesión de cenizas (donde la concentración va en descenso)*:
+```{r}
+C <- 1000000
+C_prima <- -1000
+x<-0
+alfa_1 <- 278.8276032
+alfa_2 <- -0.2561746778
+beta_1 <- 914.33
+beta_2 <- 999085.67
+
+x_analitica <- c(x)
+C_analitica <- c(C)
+
+for (x in seq(0.1, 100, by = 0.1)) {
+  C <- beta_2*exp(alfa_2*x) #grafico el segundo término (componente lenta)
+  C_analitica <- c(C_analitica, C)
+  x_analitica <- c(x_analitica, x)
+}
+plot(x_analitica, C_analitica, col = "blue", main = "Solución analítica (componente lenta)",
+     xlab = "Posición", ylab= "Concentración de cenizas")
+```
+**Posiblemente la razon por la que numéricamente no detectamos anteriormente la componente rápida en la solución mediante el método numérico de Euler Implicito, es que habría que tomar un paso de cálculo h exageradamente bajo para poder observarla en la solución estimada.**
+
+Finalmente, cabe aclarar que el hecho que la ecuación tengas características de ser rígida, puede generar problemas a la hora de su resolución. *Podría implicar que se necesite un paso espacial h muy pequeño en la componente rápida con tal de que la solución se mantenga estable*. Y esto conlleva un esfuerzo de cálculo mucho mayor, sobretodo en métodos de paso de cálculo constante como son los vistos aquí. Si se usara un método de paso variable, se podría intentar calcular la componente rápida con un h chico y despues usar uno más grande para la parte suave.
+
+Aún así, para fines prácticos, puede que únicamente sea de utilidad la parte de la solución que se comporta de manera suave (la cual abarca la gran mayoría del intervalo), tal cual parece ser este caso de la concentración de cenizas en función de la posición, donde en parte queremos saber donde la misma comienza a ser menor a 0,1 mg/m3.
+
+***
+
+
+## 5) Repetir los puntos 1-4 utilizando el método de Euler explícito. 
+
+### 5.1)
+
+Discretizamos, utilizando el mismo cambio de variables que antes:
+$$u_{n+1}=u_n + h*v_{n}$$
+$$v_{n+1}=v_n + h*(\frac{U}{D}v_{n}+\frac{K}{D}u_{n})$$
+
+
+### 5.2) Resolver el problema con un paso adecuado hasta alcanzar una concentración de cenizas menor a 0,1 mg/m3. Informar la distancia.
+
+Para saber cuál será un paso adecuado podemos hacer un análisis de estabilidad (obteniendo una condición de estabilidad teórica para h) o, por otra parte de manera empírica, probar valores de h, aumentándolo hasta observar inestabilidad en los resultados.
+En este caso vamos a hacer primero un análisis de estabilidad para luego comparar la condición de estabilidad obtenida con la prueba empírica de ir aumentando h.
+
+Perturbamos la discretización:
+
+$$u_{n+1}+\epsilon_{n+1}=u_n+\epsilon_{n} + h*(v_{n}+\delta_n)$$
+$$v_{n+1}+\delta_{n+1}=v_n+\delta_n + h*(\frac{U}{D}(v_{n}+\delta_n)+\frac{K}{D}(u_{n}+\epsilon_n))$$
+
+Operando y cancelando obtenemos el siguiente sistema:
+$$\epsilon_{n+1}=\epsilon_n+h*\delta_n$$
+$$\delta_{n+1}=h\frac{K}{D}*\epsilon_{n}+(1+h\frac{U}{D})*\delta_n$$
+
+En su forma matricial, obtenemos la matriz de amplificación:
+$$
+\left(\begin{array}{cc} 
+\epsilon_{n+1} \\ 
+\delta_{n+1} 
+\end{array}\right)
+=
+\left(\begin{array}{cc} 
+1 & h\\
+h\frac{K}{D} & (1+h\frac{U}{D})
+\end{array}\right)
+\left(\begin{array}{cc} 
+\epsilon_{n+1} \\ 
+\delta_{n+1} 
+\end{array}\right)
+$$
+
+Planteamos la condición de estabilidad sobre los autovalores $|\lambda_{1;2}|<1$ de la matriz y los calculamos mediante $det(A-\lambda*Id)=0$. Operando llegamos a que:
+
+$$\lambda_{1;2}=1+\frac{h}{2}*[\frac{U}{D}(+-)\sqrt{\frac{U^{2}}{D^{2}}+4\frac{K}{D}}]$$
+
+La constante que multiplica al h/2, será...
+1)...positiva para lambda 1 (correspondiente a la suma).
+2)... negativa para lambda 2 (correspondiente a la resta), ya sea con K=10 o K calibrado=7.
+
+Para lambda 1: $|\lambda_{1}|<1$
+
+$$-1<1+\frac{h}{2}*[\frac{U}{D}+\sqrt{\frac{U^{2}}{D^{2}}+4\frac{K}{D}}]<1$$
+Operando:
+$$\frac{-4}{[\frac{U}{D}+\sqrt{\frac{U^{2}}{D^{2}}+4\frac{K}{D}}]}<h<0$$
+
+Aquí llegamos a que la condición de estabilidad **implica que h<0, siendo esto imposible**, ya que para avanzar en el cálculo de la función y la derivada, el paso debe ser, obviamente, positivo. Por ende, *teóricamente, Euler Explícito es siempre inestable para este caso*.
+
+Para lambda 2: $|\lambda_{2}|<1$ (hacemoslo análogo pero con la constante negativa cambia el sentido de la desigualdad)
+
+$$\frac{-4}{[\frac{U}{D}-\sqrt{\frac{U^{2}}{D^{2}}+4\frac{K}{D}}]}>h>0$$
+
+Con K=10 sería, aproximadamente: $7,807>h>0$. Esta condición sí es posible cumplirla, pero como no es posible cumplir la primera, aún así la solución seguirá siendo inestable.
+
+Para comprobar empíricamente que este método da siempre inestable, fuimos probando diferentes pasos de cálculo pequeños con el siguiente código (que serviría para obtener lo pedido en la consigna). Al hacerlo vimos que con ningun paso probado, se llego a la concentración de cenizas de menos de 0,1 mg/m3 pedida. A modo de ejemplo, mostramos el resultado de Euler Explícito con un paso de 0,5 km (cortamos el ciclo a los 1000 avances), para se pueda observar que esta solución no tiene ningún sentido físico en este fenómeno que queremos analizar:
+```{r}
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+h <- 0.5 # paso inicial
+n <- 0
+
+C_calculadas <- c(C)
+C_prima_calculadas <- c(C_prima)
+x_calculadas <- c(x)
+
+while (C >= 0.1) {
+    C <- C + h*C_prima
+    C_prima <- C_prima + h*((U/D)*C_prima+(K/D)*C)
+    x <- x+h
+    n <- n+1
+    
+    C_calculadas <- c(C_calculadas, C)
+    C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+    x_calculadas <- c(x_calculadas, x)
+    if (n>1000){
+      break # corto el ciclo en caso de que no de
+    }
+}
+plot(x_calculadas, C_calculadas, main = "Concentración con Euler EXPLÍCITO")
+plot(x_calculadas, C_prima_calculadas, main = "Derivada con Euler EXPLÍCITO")
+```
+
+Podemos concluir que **lo observado teóricamente en el análisis de estabilidad, coincide con lo obtenido empíricamente**.
+
+A parte de este análsis, como ya se mencionó, este problema tiene ciertas características de ser *rígido*. Por lo que es común que en estos problemas, *los métodos explícitos presenten problemas como inestabilidad*.
+
+
+### 5.3) Reducir el paso de cálculo hasta lograr un error menor al 1%.
+
+A partir de lo explicado anteriormente, vamos a ver empíricamente si, reduciendo el valor del paso de cálculo, con Euler Explícito es posible o no, lograr un error menor al 1% para este caso, debido a la inestabilidad ya mencionada. En este caso, ahora que tenemos la solución analítica, la vamos a utilizar para calcular el error absoluto y el relativo de las soluciónes de Euler Explícito en x=0,1 km.
+
+Primero, *utilizo únicamente la componente con variación lenta (suave) de la solución analítica* (que parece ser lo que pudimos estimar mediante Euler Implícito anteriormente) y veo que sucede:
+```{r}
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+h <- 0.1
+pasos_utilizados <- c(NA)
+C_obtenidos_dist_h <- c(NA)
+error_abs_obtenido_dist_h <- c(NA)
+error_rel_obtenido_dist_h <- c(NA)
+error_rel <- 100
+C_analitica_en01km <- c(NA)
+while (error_rel >= 1) {
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+
+  while (x<0.1) { #calculo la concentración a los 0,1km
+    C <- C + h*C_prima
+    C_prima <- C_prima + h*((U/D)*C_prima+(K/D)*C)
+    x <- x+h
+    n <- n+1
+  }
+  error_abs <- abs(C-C_analitica[2]) #errores con respecto a C(x=0.1), sol. analítica
+  error_rel <- (error_abs/C)*100
+  C_analitica_en01km <- c(C_analitica_en01km, C_analitica[2])
+  pasos_utilizados <- c(pasos_utilizados, h)
+  C_obtenidos_dist_h <- c(C_obtenidos_dist_h, C)
+  error_abs_obtenido_dist_h <- c(error_abs_obtenido_dist_h, error_abs)
+  error_rel_obtenido_dist_h <- c(error_rel_obtenido_dist_h, error_rel)
+  h <- h/2
+  if (h <= 0.0000001){
+    print("NO es posible disminuir el error por la inestabilidad del método para este caso")
+    break #corto el ciclo en caso de no poder bajar el error relativo
+  }
+}
+
+data.frame("Paso h utilizado"= pasos_utilizados, "C en 0,1km"= C_obtenidos_dist_h, "C analitica en 0,1km"= C_analitica_en01km, "Error absoluto de C"= error_abs_obtenido_dist_h, "Error relativo de C (%)"= error_rel_obtenido_dist_h)
+```
+
+Como se observa, según esta solución analítica (la parte de la función con variación suave), el error no se logra disminuir reduciendo el paso, lo cual no tendría sentido teoricamente, ya que el error es proporcional al paso elevado el orden de precisión.
+Para entender esto, ahora vamos a probar disminuir el error, pero *esta vez utilizando la solución analítica completa*:
+```{r}
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+h <- 0.1
+pasos_utilizados <- c(NA)
+C_obtenidos_dist_h <- c(NA)
+error_abs_obtenido_dist_h <- c(NA)
+error_rel_obtenido_dist_h <- c(NA)
+error_rel <- 100
+C_analitica_en01km <- c(NA)
+while (error_rel >= 1) {
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+
+  while (x<0.1) { #calculo la concentración a los 0,1km
+    C <- C + h*C_prima
+    C_prima <- C_prima + h*((U/D)*C_prima+(K/D)*C)
+    x <- x+h
+    n <- n+1
+  }
+  error_abs <- abs(C-C_analitica_2terminos[2]) #errores con respecto a C(x=0.1), sol. analítica
+  error_rel <- (error_abs/C)*100
+  C_analitica_en01km <- c(C_analitica_en01km, C_analitica_2terminos[2])
+  pasos_utilizados <- c(pasos_utilizados, h)
+  C_obtenidos_dist_h <- c(C_obtenidos_dist_h, C)
+  error_abs_obtenido_dist_h <- c(error_abs_obtenido_dist_h, error_abs)
+  error_rel_obtenido_dist_h <- c(error_rel_obtenido_dist_h, error_rel)
+  h <- h/2
+  if (h <= 0.0000001){
+    print("NO es posible disminuir el error por la inestabilidad del método para este caso")
+    break #corto el ciclo en caso de no poder bajar el error relativo
+  }
+}
+
+data.frame("Paso h utilizado"= pasos_utilizados, "C en 0,1km"= C_obtenidos_dist_h, "C analitica en 0,1km"= C_analitica_en01km, "Error absoluto de C"= error_abs_obtenido_dist_h, "Error relativo de C (%)"= error_rel_obtenido_dist_h)
+```
+
+Ahora sí parece que es posible disminuir el error de cálculo de Euler Explícito, utilizando la solución analítica completa (término rápido y término lento) para calcular el error. **Esto está confirmando la hipótesis que teniamos luego de calcular la solución analítica, de que, para poder percibir la componente rápida en la solución, debiamos tomar un paso de cálculo extremadamente pequeño al estimar la función mediante un método numérico.**
+
+Entonces para lograr un error relativo menor al 1%, se necesita un paso del orden de magnitud de 1,525879*10^(-06), lo cual es extremadamente pequeño como para poder calcular la concentración de cenizas a lo largo de un recorrido largo.
+Podemos observar que, en este caso, lo empírico no se corresponde del todo con lo visto observado teóricamente en el análisis de estabilidad de Euler Explícito, donde parecia ser siempre inestable este método.
+
+
+
+### 5.4) Calibrar el coeficiente de decaimiento (K) del modelo para lograr una concentración de cenizas a 100 km del volcán de 0,07 mg/m3.
+
+Nuevamente, a partir de la medición real obtenida, vamos a calibrar el K según Euler Explícito. Para esto debemos obtener que la concentración de cenizas a los 100km sea 0,07 mg/m3, con este K calibrado.
+
+Dada una concentración de cenizas de 0,07 mg/m3 a los 100km del volcán, lo cual consideramos que habrá sido una medición real en esa posición, vamos a probar distintos valores de K al calcular la C(x=100km). Con el fin de hayar el K calibrado a partir del dato real, y así tener un coeficiente de decaimiento que se aproximará más al real. Para el cálculo de la concentración vamos a utilizar h=1km.
+
+```{r}
+h <- 0.000001 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+# NO uso la K dada de dato
+C <- 1000000
+C_calcu_distK_100km <- c(NA)
+K_probados <- c(NA)
+
+K_calib_EE <- 0 #inicializo la cte de decaimiento calibrada con Euler Explícito
+
+while (round(C, digits = 2) != 0.07) {
+  K_calib_EE <- K_calib_EE+0.001
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  C_calculadas_Kcalib <- c(C)
+  x_calculadas_Kcalib <- c(x)
+  
+  for (x in 1:100) { # calculo C(x=100km)
+    C <- C + h*C_prima
+    C_prima <- C_prima + h*((U/D)*C_prima+(K_calib_EE/D)*C)
+    x <- x+h
+    
+    C_calculadas_Kcalib <- c(C_calculadas_Kcalib, C)
+    x_calculadas_Kcalib <- c(x_calculadas_Kcalib, x)
+  }
+  K_probados <- c(K_probados, K_calib_EE)
+  C_calcu_distK_100km <-c(C_calcu_distK_100km, C)
+  if (K_calib_EE > 100){
+    print("No se encontro un K que cumpla con C(x=100km) = 0,07 mg/m3")
+    break
+  }
+}
+```
+
+Debido a la inestabilidad del método de Euler Explícito para este caso, al intentar calcular la concentración a los 100km, siendo esto un avance tan lejano espacialmente a la condición incinal (en x=0). Parece ser que, aunque tomemos un paso de cálculo del orden de magnitud de 0,000001 (el cual nos había permitido anteriormente disminuir el error a menos del 1%), *no podemos lograr una estimación correcta de C(x=100km) que nos permita obtener el K calibrado para este caso*.
+
+A continuación podemos observar, las primeras 6 filas y últimas 6 filas de un dataframe (el mismo es demasiado largo para mostrarlo en su totalidad) donde se muestran los K que se intentaron usar, y los C(x=100km) que se obtuvieron con los mismos:
+```{r}
+head(data.frame("K_probado"=K_probados, "C(x=100km)"=C_calcu_distK_100km))
+tail(data.frame("K_probado"=K_probados, "C(x=100km)"=C_calcu_distK_100km))
+```
+
+
+***
+
+## 6) Repetir los puntos 1-4 utilizando el método de Crank Nicolson O(2).
+
+### 6.1)
+
+Discretizamos, utilizando el mismo cambio de variables que antes:
+$$u_{n+1}=u_{n}+\frac{h}{2}[(v_{n+1})+(v_n)]$$
+$$u_{n+1}=u_{n}+\frac{h}{2}[(\frac{U}{D}v_{n+1}+\frac{K}{D}u_{n+1})+(\frac{U}{D}v_{n}+\frac{K}{D}u_{n})]$$
+
+operando:
+$$-u_{n+1}+\frac{h}{2}v_{n+1}=-u_n-\frac{h}{2}v_n$$
+$$(\frac{h}{2}\frac{K}{D})u_{n+1}+(\frac{h}{2}\frac{U}{D}-1)v_{n+1}=(-\frac{h}{2}\frac{K}{D})u_n+(-1-\frac{h}{2}\frac{U}{D})v_n$$
+
+Planteando en formal matricial el SEL:
+$$
+\left(\begin{array}{cc} 
+-1 & \frac{h}{2}\\
+\frac{h}{2}\frac{K}{D} & (\frac{h}{2}\frac{U}{D}-1)
+\end{array}\right)
+\left(\begin{array}{cc} 
+u_{n+1} \\ 
+v_{n+1} 
+\end{array}\right)
+=
+\left(\begin{array}{cc} 
+-u_{n}-\frac{h}{2}v_n \\ 
+-\frac{h}{2}\frac{K}{D}u_n-(\frac{h}{2}\frac{U}{D}+1)v_{n} 
+\end{array}\right)
+$$
+En cada avance se deberá resolver este SEL.
+
+
+### 6.2) Resolver el problema con un paso adecuado hasta alcanzar una concentración de cenizas menor a 0,1 mg/m3. Informar la distancia.
+
+El método de Crank-Nicolson(O2) es incondicionalmente estable. Por lo que, al igual que el en el caso de Euler implícito, teóricamente no importa cuán grande sea el paso de cálculo que usemos, siempre el resultado se debería mantener estable. Para corroborar esto, luego vamos a probar ir aumentando este paso h para ver si las soluciones aún asi se mantienen estables. Pero primero, para comenzar el análisis, vamos a resolver con un paso de h=1km, considerando que este es adecuado para fines útiles y prácticos de la solcuión, como ya se explico anteriormente:
+
+```{r}
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+
+#Para resolver el SEL (Ax=b) usamos Eliminación Gaussiana CON pivoteo parcial:
+A <- matrix(c(-1, h/2, (h/2)*(K/D), (h/2)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+print(A) #matriz de coeficientes
+```
+
+```{r}
+#Pivoteo parcial con fin de reducir el valor del multiplicador al aumentar el elemento de la diagonal
+fila <- A[1,]
+A[1,] <- A[2,]
+A[2,] <- fila
+
+m21 <- A[2,1]/A[1,1] # multiplicador
+A[2,] <- A[2,]-m21*A[1,]
+
+# debido a que hay que resolver sucesivamente SEL con la misma matriz A y diferentes b, usamos una descomposición LU de Doolittle para facilitar el cálculo. (A=LU)
+Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+Upper <- A
+print("Matriz L:", quote = FALSE)
+Lower
+print("Matriz U:", quote = FALSE)
+Upper
+```
+
+```{r}
+n <- 0 #cantidad de avances
+C_calculadas <- c(C)
+C_prima_calculadas <- c(C_prima)
+x_calculadas <- c(x)
+
+while (C >= 0.1){ #avanzamos hasta que C sea menor a 0,1 mg/m3
+  b <- matrix(c((-C-(h/2)*C_prima), (-(h/2)*(K/D)*C-((h/2)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+  
+  #intercambio de filas para b del pivoteo parcial
+  fila <- b[1,]
+  b[1,] <- b[2,]
+  b[2,] <- fila
+  
+  #sistema Ly=b
+  vector_y <- matrix(c(b[1,], # y1
+                     b[2,]-Lower[2,1]*b[1,]), # y2
+                     nrow = 2, ncol = 1, byrow = TRUE)
+  #Sistema Ux=y
+  vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                       vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                       nrow = 2, ncol = 1, byrow = TRUE)
+  
+  #Valores de la concentración de cenizas y de su derivada en la posición x
+  x <- x+h
+  n <- n+1
+  C <- vector_x[1,]
+  C_prima <- vector_x[2,]
+  
+  #Guardo los valores calculados en vectores:
+  C_calculadas <- c(C_calculadas, C)
+  C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+  x_calculadas <- c(x_calculadas, x)
+}
+```
+
+Por lo tanto:
+```{r}
+paste("Se alcanza una concentración de cenizas menor a los 0,1 mg/m3 a los", x, "kilómetros del volcán (distancia medida en dirección a la velocidad del viento).")
+```
+
+Graficamos la *concentración de cenizas en función de la posición x (en dirección de la velocidad del viento)*:
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+ggplot(data.frame("Posición"=x_calculadas, "Concentración_de_cenizas"=C_calculadas), aes(x=Posición, y=Concentración_de_cenizas)) +
+  geom_point(color="blue", shape=1)
+```
+
+Graficamos la *derivada de la concentración de cenizas en función de la posición x*:
+```{r message=FALSE, warning=FALSE}
+ggplot(data.frame("Posición"=x_calculadas, "Derivada_de_la_concentración"=C_prima_calculadas), aes(x=Posición, y=Derivada_de_la_concentración)) +
+  geom_point(color="blue", shape=3)
+```
+
+En primera instancia, observamos que el gráfico de la función concentración de cenizas en función de la posición parece ser estable. Sin embargo, al ver el segundo gráfico, de la derivada de la concentración en función de la posición, vemos que hay una **clara inestabilidad** en esta solución. Viendose un **comportamiento errático** de la estimación de esta derivada, con subidas y bajadas en cada avance.
+
+Se supone que este es un método incondicionalmente estable, pero, como ya se explicó, este problema tiene ciertas caractirísticas de un problema rígido, los cuales suelen tener problemas con métodos explícitos. Y además, este método de Crank-Nicolson hace un promedio entre los métodos de Euler Explícito y Euler Implícito. Por lo que, al haber visto anteriormente que Euler Explícito da inestabilidad al intentar calcular avances prolongados, podemos pensar en la posibilidad de que la **parte explícita de Crank-Nicolson está generando inestabilidad**.
+
+Entonces, lo que vamos a intentar hacer para resolver este problema, es **cambiar la ponderación, dandole más peso a la parte implícita**. En un principio, vamos a hacerlo manteniendo fijo el paso de cálculo.
+
+Discretizando con una ponderación genérica, queda:
+
+$$u_{n+1}=u_{n}+h*[Pond*(v_{n+1})+(1-Pond)*(v_n)]$$
+$$u_{n+1}=u_{n}+h*[Pond*(\frac{U}{D}v_{n+1}+\frac{K}{D}u_{n+1})+(1-Pond)*(\frac{U}{D}v_{n}+\frac{K}{D}u_{n})]$$
+
+En forma matricial:
+$$
+\left(\begin{array}{cc} 
+-1 & Pond*h\\
+Pond*h\frac{K}{D} & (Pond*h\frac{U}{D}-1)
+\end{array}\right)
+\left(\begin{array}{cc} 
+u_{n+1} \\ 
+v_{n+1} 
+\end{array}\right)
+=
+\left(\begin{array}{cc} 
+-u_{n}-(1-Pond)*hv_n \\ 
+-(1-Pond)h\frac{K}{D}u_n-((1-Pond)*h\frac{U}{D}+1)v_{n} 
+\end{array}\right)
+$$
+
+A continuación, *vamos a ir probando distintas ponderaciones*, de 0,5 (la original) hasta 1 (donde solo quedaría la parte implícita). Con el fin de encontrar una donde tanto la estimación de la concentración de ceniza como su derivada den estables, siempre dandole más peso a la parte implícita por lo ya explicado, para luego comparar estos resultados:
+```{r}
+C_x_dist_Pond <- list() #armo una lista de listas
+
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+
+for (Pond in seq(0.5, 1, by = 0.1)) { 
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  #Eliminación Gaussiana CON pivoteo parcial:
+  A <- matrix(c(-1, Pond*h, (Pond*h)*(K/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  
+  #Pivoteo parcial
+  fila <- A[1,]
+  A[1,] <- A[2,]
+  A[2,] <- fila
+  
+  m21 <- A[2,1]/A[1,1] # multiplicador
+  A[2,] <- A[2,]-m21*A[1,]
+  
+  #descomposición LU de Doolittle (A=LU)
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  
+  while (C >= 0.1){ #avanzamos hasta que C sea menor a 0,1 mg/m3
+    b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #intercambio de filas para b del pivoteo parcial
+    fila <- b[1,]
+    b[1,] <- b[2,]
+    b[2,] <- fila
+    
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    #Guardo los valores calculados en vectores:
+    C_calculadas <- c(C_calculadas, C)
+    C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+    x_calculadas <- c(x_calculadas, x)
+  }
+  C_x_dist_Pond[[length(C_x_dist_Pond) + 1]] <- list("Posición"=x_calculadas, "Concentración_de_cenizas"=C_calculadas, "Derivada"=C_prima_calculadas)
+  # vamos guardando en esta lista los avances calculados con distintas ponderaciones
+}
+```
+
+
+Ahora graficando estas soluciones numéricas de la concentración de cenizas junto con la solución analítica calculada anteriormente (solo la componente de variación suave), expresada como una línea continua:
+```{r}
+# Graficando:
+plot(C_x_dist_Pond[[1]]$Posición, C_x_dist_Pond[[1]]$Concentración_de_cenizas, col="blue",
+     xlab="Posición", ylab="Concentración de Cenizas", 
+     main="Comparación de cálculo de C para distintas ponderaciones")
+points(C_x_dist_Pond[[2]]$Posición, C_x_dist_Pond[[2]]$Concentración_de_cenizas, col="black")
+points(C_x_dist_Pond[[3]]$Posición, C_x_dist_Pond[[3]]$Concentración_de_cenizas, col="orange")
+points(C_x_dist_Pond[[4]]$Posición, C_x_dist_Pond[[4]]$Concentración_de_cenizas, col="red")
+points(C_x_dist_Pond[[5]]$Posición, C_x_dist_Pond[[5]]$Concentración_de_cenizas, col="purple")
+points(C_x_dist_Pond[[6]]$Posición, C_x_dist_Pond[[6]]$Concentración_de_cenizas, col="green")
+lines(x_analitica, C_analitica)
+legend("topright", 
+  legend = c("Pond=0,5", "Pond=0,6", "Pond=0,7", "Pond=0,8", "Pond=0,9", "Pond=1"),
+  col = c("blue" ,"black", "orange", "red", "purple", "green"), 
+  pch = c(1, 1, 1, 1, 1, 1))
+```
+Observamos, para todas las ponderaciones aplicadas, la solución de la función siempre se mantiene estable, como antes. Tambien podemos ver un leve corrimiento a medida que le damos más peso a la parte implícita, donde *la solución numérica con Crank-Nicolson se aleja de la solución analítica*. Esto posiblemente sea porque esta *disminuyendo el orden de precisión de Crank-Nicolson (orden 2) el hecho de haber cambiado lo ponderación*.
+
+Ahora graficamos la derivada:
+```{r}
+# Graficando:
+plot(C_x_dist_Pond[[1]]$Posición, C_x_dist_Pond[[1]]$Derivada, col="blue",
+     xlab="Posición", ylab="Derivada de la Concentración", 
+     main="Comparación de cálculo de C' para distintas ponderaciones", pch = c(2))
+points(C_x_dist_Pond[[2]]$Posición, C_x_dist_Pond[[2]]$Derivada, col="black", pch = c(2))
+points(C_x_dist_Pond[[3]]$Posición, C_x_dist_Pond[[3]]$Derivada, col="orange", pch = c(2))
+points(C_x_dist_Pond[[4]]$Posición, C_x_dist_Pond[[4]]$Derivada, col="red", pch = c(2))
+points(C_x_dist_Pond[[5]]$Posición, C_x_dist_Pond[[5]]$Derivada, col="purple", pch = c(2))
+points(C_x_dist_Pond[[6]]$Posición, C_x_dist_Pond[[6]]$Derivada, col="green", pch = c(2))
+legend("topright", 
+  legend = c("Pond=0,5", "Pond=0,6", "Pond=0,7", "Pond=0,8", "Pond=0,9", "Pond=1"),
+  col = c("blue" ,"black", "orange", "red", "purple", "green"), 
+  pch = c(2, 2, 2, 2, 2, 2))
+```
+
+A parir de este último gráfico, podemos ver que, **a medida que le damos más peso a la parte implícita (Pond va aumentando), vamos aumentando la estabilidad de esta solución**. Observando como, en un principio, con Pond=0,5 era totalmente inestable. Luego con Pond=0,6 la solución comienza inestable y luego va ajustandoce hasta estabilizarce (porque se esta reduciendo el error local en cada avance, comienza la estabilidad). Así sucesivamente, llegamos a que *con una ponderación de Pond=0,8 parece ser totalmente estable este método de Crank-Nicolson.* Vemos tambien que prácticamente tuvimos que quitarle casi todo el peso a la parte explícita para lograr estabilidad en todo el intervalo analizado.
+
+Ahora podemos pensar en que habrá una **solución de compromiso, entre mantener el orden de precisión original del método numérico y que la solución numérica de la derivada sea estable**.
+Como posteriormente deseamos aumentar el paso para observar si el método se desestabiliza, vamos a usar la ponderación Pond=0,8 sacrificando precisión en la solución numérica. Sin embargo, para un uso práctico de este resultado, puede que sea más útil tener una solución numérica de la concentración más precisa, a expensas de que la derivada quede inestable.
+
+
+Entonces, teniendo esta ponderación, con este paso adecuado de h=1km, podemos contestar la pregunta del enunciado:
+```{r}
+paste("Utilizando una ponderación de Pond=0,8. Obtenemos que se alcanza una concentración de cenizas menor a los 0,1 mg/m3 a los", C_x_dist_Pond[[4]]$Posición[[length(C_x_dist_Pond[[4]]$Posición)]], "kilómetros del volcán (distancia medida en dirección a la velocidad del viento).")
+```
+
+
+Ahora vamos a observar empíricamente qué sucede si aumentamos el paso de cálculo (manteniendo Pond=0,8). Dado que teóricamente este es un método incondicionalmente estable, debería no presentar inestabilidad (pero ya vimos que esto puede no ser siempre así):
+```{r}
+C_x_dist_h <- list() #armo una lista de listas
+
+Pond <- 0.8 #PONDERACIÓN ELEGIDA
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+
+for (h in seq(2, 18, by = 4)) { 
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  #Eliminación Gaussiana CON pivoteo parcial:
+  A <- matrix(c(-1, Pond*h, (Pond*h)*(K/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  
+  #Pivoteo parcial
+  fila <- A[1,]
+  A[1,] <- A[2,]
+  A[2,] <- fila
+  
+  m21 <- A[2,1]/A[1,1] # multiplicador
+  A[2,] <- A[2,]-m21*A[1,]
+  
+  #descomposición LU de Doolittle (A=LU)
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  
+  while (C >= 0.1){ #avanzamos hasta que C sea menor a 0,1 mg/m3
+    b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+    
+    #intercambio de filas para b del pivoteo parcial
+    fila <- b[1,]
+    b[1,] <- b[2,]
+    b[2,] <- fila
+    
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    #Guardo los valores calculados en vectores:
+    C_calculadas <- c(C_calculadas, C)
+    C_prima_calculadas <- c(C_prima_calculadas, C_prima)
+    x_calculadas <- c(x_calculadas, x)
+  }
+  C_x_dist_h[[length(C_x_dist_h) + 1]] <- list("Posición"=x_calculadas, "Concentración_de_cenizas"=C_calculadas, "Derivada"=C_prima_calculadas)
+  # vamos guardando en esta lista los avances calculados con distintos pasos de cálculo
+}
+```
+
+Graficando la concentración, comparando con la componente suave de la solución analítica (línea continua):
+```{r}
+# Graficando:
+plot(C_x_dist_h[[1]]$Posición, C_x_dist_h[[1]]$Concentración_de_cenizas, col="blue",
+     xlab="Posición", ylab="Concentración de Cenizas", 
+     main="Comparación de cálculo de C para distintos pasos h", sub = "Pond=0,8")
+points(C_x_dist_h[[2]]$Posición, C_x_dist_h[[2]]$Concentración_de_cenizas, col="green")
+points(C_x_dist_h[[3]]$Posición, C_x_dist_h[[3]]$Concentración_de_cenizas, col="orange")
+points(C_x_dist_h[[4]]$Posición, C_x_dist_h[[4]]$Concentración_de_cenizas, col="black")
+points(C_x_dist_h[[5]]$Posición, C_x_dist_h[[5]]$Concentración_de_cenizas, col="red")
+lines(x_analitica, C_analitica)
+legend("topright", 
+  legend = c("h=2", "h=6", "h=10", "h=14", "h=18"),
+  col = c("blue" ,"green", "orange", "black", "red"), 
+  pch = c(1, 1, 1, 1, 1))
+```
+En el gráfico anterior podemos ver que **a medida que aumentamos el paso de cálculo (de 2km hasta 18km), la solución numérica va alejandose de la solución analítica**. Tal cual es lo esperado, ya que **el error de truncamiento es proporcional al paso de cálculo elevado el orden de precisión, por lo que aumenta al aumentar h**. Y sin embargo, **se mantiene estable**, cumpliendose el conocimiento teórico de que este método se supone incondicionalmente estable. Aunque parece suceder que solo lo es con la ponderación adecuada.
+
+
+Graficando la derivada:
+```{r}
+# Graficando:
+plot(C_x_dist_h[[1]]$Posición, C_x_dist_h[[1]]$Derivada, col="blue",
+     xlab="Posición", ylab="Concentración de Cenizas", 
+     main="Comparación de cálculo de C' para distintos pasos h", pch = c(2), sub = "Pond=0,8")
+points(C_x_dist_h[[2]]$Posición, C_x_dist_h[[2]]$Derivada, col="green", pch = c(2))
+points(C_x_dist_h[[3]]$Posición, C_x_dist_h[[3]]$Derivada, col="orange", pch = c(2))
+points(C_x_dist_h[[4]]$Posición, C_x_dist_h[[4]]$Derivada, col="black", pch = c(2))
+points(C_x_dist_h[[5]]$Posición, C_x_dist_h[[5]]$Derivada, col="red", pch = c(2))
+legend("topright", 
+  legend = c("h=2", "h=6", "h=10", "h=14", "h=18"),
+  col = c("blue" ,"green", "orange", "black", "red"), 
+  pch = c(2, 2, 2, 2, 2))
+```
+Aquí vemos que para la solución numérica de la derivada, **cuando aumentamos el paso de cálculo, apenas ya a 6km o más, se empieza a ver un comportamiento errático propio de la inestabilidad numérica**. Con lo cuál, finalmente esta **solución de la derivada por Crank-Nicolson NO se mantiene estable aumentando el paso, contrario a lo que se esperaba teóricamente. Incluso habiendo optado por una ponderación que beneficiaba la estabilidad de la misma**.
+
+Como ya se mencionó, el hecho de cambiar la ponderación, disminuye el orden de precisión de Crank-Nicolson (como se demostró empiricamente probando las distintas ponderaciones). Por lo que, si usaramos un Pond más pequeño (le damos más peso a la parte explícita) para analizar este aumento de h, pasaría que la solución numérica de la concentración se mantendría más precisa que con Pond=0,8. Mientras que la derivada se mostraría inestable aún más rapidamente que en el caso graficado. Y, lógicamente, lo contrario sucedería si tomamos un Pond más grande (le damos más peso a la parte implícita).
+
+
+
+### 6.3) Reducir el paso de cálculo hasta lograr un error menor al 1%.
+
+Nuevamente, vamos a calcular C(x=100km) sucesivamente, reduciendo el paso a la mitad en cada iteración, hasta lograr un error relativo de menos del 1%. Este error, será calculado mediante la solución analítica (únicamente la componente de variación lenta), con lo cuál se puede asumir que es el error exacto.
+```{r}
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+K <- 10 #constante de decaimiento
+Pond <- 0.8
+h <- 1 # paso inicial
+pasos_utilizados <- c(NA)
+C_obtenidos_dist_h <- c(NA)
+C_a_1km_analitico <- c(NA)
+error_abs_obtenido_dist_h <- c(NA)
+error_rel_obtenido_dist_h <- c(NA)
+error_rel <- 100
+while (error_rel >= 1) {
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  #Eliminación Gaussiana sin pivoteo
+  A <- matrix(c(-1, Pond*h, (Pond*h)*(K/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  m21 <- A[2,1]/A[1,1]
+  A[2,] <- A[2,]-m21*A[1,]
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  while (x<1){
+    b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    error_abs <- abs(C-C_analitica[11]) #ERROR EXACTO
+    error_rel <- (error_abs/C)*100
+    C_calculadas <- c(C_calculadas, C)
+  }
+  pasos_utilizados <- c(pasos_utilizados, h)
+  C_obtenidos_dist_h <- c(C_obtenidos_dist_h, C)
+  C_a_1km_analitico <- c(C_a_1km_analitico, C_analitica[11])
+  error_abs_obtenido_dist_h <- c(error_abs_obtenido_dist_h, error_abs)
+  error_rel_obtenido_dist_h <- c(error_rel_obtenido_dist_h, error_rel)
+  h <- h/2
+}
+data.frame("Paso h utilizado"= pasos_utilizados, "C a 1km"= C_obtenidos_dist_h, "C a 1km_analitica" = C_a_1km_analitico, "Error absoluto de C"= error_abs_obtenido_dist_h, "Error relativo de C (%)"= error_rel_obtenido_dist_h)
+```
+
+Por lo tanto, **mediante Crank-Nicolson con un paso de cálculo de h = 0,5 km se consigue un error relativo (estimado) de aproximadamente 0,92% (menor al 1%)**. 
+
+Como podemos ver, **obtuvimos una solución de C(x=1km) de error relativo menor 1%, por Crank-Nicolson con el doble de paso de cálculo de la que habíamos obtenido mediante Euler Implícito**. Esto es debido a que Euler Implícito es un método de orden de precisión 1, mientras que Crank-Nicolson es un método de orden 2, cuando se usa la ponderación estandar. Asique cabe destacar que aunque hayamos disminuido el orden de precisión de Crank-Nicolson por culpa de cambiar la ponderación, aún así parece que mantuvo mayor precisión que Euler Implícito. Igualmente esto lo veremos más adelante cuando analicemos los ordenes de convergencia de los métodos obtenidos experimentalmente.
+
+
+
+### 6.4) Calibrar el coeficiente de decaimiento (K) del modelo para lograr una concentración de cenizas a 100 km del volcán de 0,07 mg/m3.
+
+```{r}
+Pond <- 0.8
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+# NO uso la K dada de dato
+C <- 1000000
+
+K_calib_CN <- 0 #inicializo la cte de decaimiento calibrada con Euler Implícito
+
+while (round(C, digits = 2) != 0.07) {
+  K_calib_CN <- K_calib_CN+0.001
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  C_calculadas_Kcalib_CN <- c(C)
+  x_calculadas_Kcalib_CN <- c(x)
+
+  #Eliminación Gaussiana sin pivoteo parcial:
+  A <- matrix(c(-1, Pond*h, (Pond*h)*(K_calib_CN/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  m21 <- A[2,1]/A[1,1] # multiplicador
+  A[2,] <- A[2,]-m21*A[1,]
+  #Descomposición LU de Doolittle (A=LU)
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  
+  for (x in 1:100) { # calculo C(x=100km)
+    b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K_calib_CN/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+    
+    C_calculadas_Kcalib_CN <- c(C_calculadas_Kcalib_CN, C)
+    x_calculadas_Kcalib_CN <- c(x_calculadas_Kcalib_CN, x)
+  }
+  if (K_calib_CN > 100){
+    break
+  }
+}
+```
+
+```{r}
+paste("A partir de la iteración, se obtuvo que con un coeficiente de decaimiento de ", K_calib_CN, "se obtiene, mediante Crank-Nicolson, una concentración de cenizas de aproximadamente ", round(C, digits = 2), "mg/m3 a los 100km.")
+```
+
+Por ende, **K calibrado por Crank-Nicolson es de aproximadamente 6,72**. Observamos que da un *valor menor al dado como dato (estimativo) de K=10, y cercano al K calibrado por Euler Implícito, de aproximadamente 6,96*.
+
+Bajo el conocimiento teórico de que Crank-Nicolson es de orden mayor a Euler Implícito, podriamos decir que con el K calibrado por este primer método mencionado (orden 2) se debería obtener una solución más precisa que con el K calibrado por Euler Implícito (orden 1). Para comprobar empíricamente si esto es así, vamos a realizar tres "pruebas", comparando los resultados tambien con la solución analítica (componente suave) representada gráficamente mediante una línea continua.
+
+Primero, comparar *Euler Implicito (orden 1) con K=6,96, Crank-Nicolson (orden 2) con K=6,72*:
+```{r}
+plot(x_calculadas_Kcalib_EI, C_calculadas_Kcalib_EI, col = "blue", main = "EI K=6,96 contra CN K=6,72")
+points(x_calculadas_Kcalib_CN, C_calculadas_Kcalib_CN, pch = c(2), col = "orange")
+lines(x_analitica, C_analitica)
+legend("topright", 
+  legend = c("Euler Implícito K=6,96", "Crank-Nicolson K=6,72", "CN con K=10 (dato)"),
+  col = c("blue" ,"orange"),
+  pch = c(1, 2))
+```
+Las soluciónes numéricas con distintis métodos y distintos K son similares en su precisión, a simple vista.
+
+Segundo, comparar *Euler Implícito (orden 1) con K=6,95 y con K=6,72* (debemos calcular Euler Implícito con K=6,72):
+```{r}
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+C_calculadas_EI_conKcalib_CN <- c(C)
+x_calculadas_EI_conKcalib_CN <- c(x)
+
+#Eliminación Gaussiana sin pivoteo parcial:
+A <- matrix(c(-1, h, h*(K_calib_CN/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+m21 <- A[2,1]/A[1,1] # multiplicador
+A[2,] <- A[2,]-m21*A[1,]
+#Descomposición LU de Doolittle (A=LU)
+Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+Upper <- A
+
+for (x in 1:100) { # calculo C(x=100km)
+  b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+  #sistema Ly=b
+  vector_y <- matrix(c(b[1,], # y1
+                     b[2,]-Lower[2,1]*b[1,]), # y2
+                     nrow = 2, ncol = 1, byrow = TRUE)
+  #Sistema Ux=y
+  vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                       vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                       nrow = 2, ncol = 1, byrow = TRUE)
+  #Valores de la concentración de cenizas y de su derivada en la posición x
+  x <- x+h
+  C <- vector_x[1,]
+  C_prima <- vector_x[2,]
+  
+  C_calculadas_EI_conKcalib_CN <- c(C_calculadas_EI_conKcalib_CN, C)
+  x_calculadas_EI_conKcalib_CN <- c(x_calculadas_EI_conKcalib_CN, x)
+}
+```
+
+```{r}
+plot(x_calculadas_Kcalib_EI, C_calculadas_Kcalib_EI, col = "blue", main = "EI K=6,96 contra EI K=6,72")
+points(x_calculadas_EI_conKcalib_CN, C_calculadas_EI_conKcalib_CN, pch = c(3), col = "orange")
+lines(x_analitica, C_analitica)
+legend("topright", 
+  legend = c("Euler Implícito K=6,96", "Euler Implícito K=6,72"),
+  col = c("blue" ,"orange"), 
+  pch = c(1, 3))
+```
+Euler Implícito con K=6,96 parece ser más preciso, en este último gráfico.
+
+Tercero comparar *Crank-Nicolson (orden 2) con K=6,96 y con K=6,72* (debemos calcular Crank-Nicolson con K=6,96):
+```{r}
+Pond <- 0.8
+h <- 1 #paso elegido
+U <- 39 #velocidad del viento
+D <- 0.14 #factor de turbulencia
+C <- 1000000 #concentración de cenizas inicial
+C_prima <- -1000
+x <- 0 #posición inicial
+C_calculadas_CN_conKcalib_EI <- c(C)
+x_calculadas_CN_conKcalib_EI <- c(x)
+
+#Eliminación Gaussiana sin pivoteo parcial:
+A <- matrix(c(-1, Pond*h, (Pond*h)*(K_calib_EI/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+m21 <- A[2,1]/A[1,1] # multiplicador
+A[2,] <- A[2,]-m21*A[1,]
+#Descomposición LU de Doolittle (A=LU)
+Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+Upper <- A
+
+for (x in 1:100) { # calculo C(x=100km)
+  b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K_calib_EI/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+  #sistema Ly=b
+  vector_y <- matrix(c(b[1,], # y1
+                     b[2,]-Lower[2,1]*b[1,]), # y2
+                     nrow = 2, ncol = 1, byrow = TRUE)
+  #Sistema Ux=y
+  vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                       vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                       nrow = 2, ncol = 1, byrow = TRUE)
+  #Valores de la concentración de cenizas y de su derivada en la posición x
+  x <- x+h
+  C <- vector_x[1,]
+  C_prima <- vector_x[2,]
+  
+  C_calculadas_CN_conKcalib_EI <- c(C_calculadas_CN_conKcalib_EI, C)
+  x_calculadas_CN_conKcalib_EI <- c(x_calculadas_CN_conKcalib_EI, x)
+}
+```
+
+```{r}
+plot(x_calculadas_Kcalib_CN, C_calculadas_Kcalib_CN, col = "blue", main = "CN K=6,96 contra CN K=6,72", pch =c(4))
+points(x_calculadas_CN_conKcalib_EI, C_calculadas_CN_conKcalib_EI, pch = c(2), col = "orange")
+lines(x_analitica, C_analitica)
+legend("topright", 
+  legend = c("Crank-Nicolson K=6,96", "Crank-Nicolson K=6,72"),
+  col = c("blue" ,"orange"), 
+  pch = c(4, 2))
+```
+Crank-Nicolson con K=6,72 parece ser más preciso, en este último gráfico.
+
+De estas tres comparaciónes podemos concluir que *los K calibrados parecen dar una solución más precisa con los respectivos métodos con los que fueron calculados que con otros*. Y ademas, contrario a lo esperado, la precisión de las soluciones por Euler Implícito y por Crank-Nicolson con sus respectivos K calibrados parecen similares, aunque el segundo sea de orden superior, aunque puede deberse a la ponderación distinta a la habitual que le dimos al mismo.
+
+
+##7) Hallar experimentalmente los órdenes de los métodos utilizados.
+
+Dado que el error de truncamiento generado por la discretización será proporcional al paso de cálculo elevado al orden de precisión (p), tenemos que:
+
+$Error(u(x))=cte*h^{p}$
+
+Esta es la razón de que a mayor paso espacial, mayor error de truncamiento.
+
+Ahora si tenemos dos pasos distintos h1 y h2 para calcular un mismo punto, y dividimos las expresiones del error correspondientes:
+
+$\frac{Error(u(x))(h_1)}{Error(u(x))(h_2)}=(\frac{h_2}{h_1})^{p}$
+
+Aplicando logaritmo natural:
+
+$ln(\frac{Error(u(x))(h_1)}{Error(u(x))(h_2)})=p*ln(\frac{h_2}{h_1})$
+
+Por lo tanto, tenemos la siguiente expresión para el error de precisión:
+
+$p=\frac{ln(\frac{Error(u(x))(h_1)}{Error(u(x))(h_2)})}{ln(\frac{h_2}{h_1})}$
+
+
+Entonces, para calcularlo experimentalmente para cada uno de los métodos numericos que se desea, vamos utilizar la concentración de cenizas en x=1km, calculandola con h1=1 y luego con h2=0,5 (la mitad). Mientras que el error absoluto, lo vamos a calcular con la solución analítica (únicamente la componente de variación lenta):
+
+### Euler Implícito
+```{r}
+h1 <- 1
+h2 <- 0.5
+for (i in 1:2) {
+  h <- h1
+  if (i==2){
+    h <- h2
+  }
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  
+  A <- matrix(c(-1, h, h*(K/D), h*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+  m21 <- A[2,1]/A[1,1]
+  A[2,] <- A[2,]-m21*A[1,]
+  Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+  Upper <- A
+  n <- 0 #cantidad de avances
+  C_calculadas <- c(C)
+  C_prima_calculadas <- c(C_prima)
+  x_calculadas <- c(x)
+  while (x<1){
+    b <- matrix(c(-C, -C_prima), nrow = 2, ncol = 1, byrow = TRUE)
+    #sistema Ly=b
+    vector_y <- matrix(c(b[1,], # y1
+                       b[2,]-Lower[2,1]*b[1,]), # y2
+                       nrow = 2, ncol = 1, byrow = TRUE)
+    #Sistema Ux=y
+    vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                         vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                         nrow = 2, ncol = 1, byrow = TRUE)
+    #Valores de la concentración de cenizas y de su derivada en la posición x
+    x <- x+h
+    n <- n+1
+    C <- vector_x[1,]
+    C_prima <- vector_x[2,]
+  }
+  if (h==1){
+    error_abs_h1_EI <- C-C_analitica[11]
+  }
+  if (h==0.5){
+    error_abs_h2_EI <- C-C_analitica[11] 
+  }
+}
+p_EI <- log(error_abs_h2_EI/error_abs_h1_EI)/log(h2/h1)
+
+paste("El orden de precisión experimental para Euler Implícito es:", p_EI)
+```
+
+Siendo este un método de orden 1 (teórico), era lo esperado que experimentalmente se consiga un número cercano.
+
+
+### Euler Explícito
+```{r}
+for (i in 1:2) {
+  h <- h1
+  if (i==2){
+    h <- h2
+  }
+  C <- 1000000 #concentración de cenizas inicial
+  C_prima <- -1000
+  x <- 0 #posición inicial
+  n <- 0 #cantidad de avances
+  while (x<1){
+    C <- C + h*C_prima
+    C_prima <- C_prima + h*((U/D)*C_prima+(K/D)*C)
+    x <- x+h
+    n <- n+1
+  }
+  if (h==1){
+    error_abs_h1_EE <- C-C_analitica[11]
+  }
+  if (h==0.5){
+    error_abs_h2_EE <- C-C_analitica[11] 
+  }
+}
+p_EE <- log(error_abs_h2_EE/error_abs_h1_EE)/log(h2/h1)
+
+paste("El orden de precisión experimental para Euler Explícito es:", p_EE)
+```
+
+Como ya veniamos hablando, el método de Euler Explícito presenta problemas importantes de inestabilidad para este caso. Es por eso que, aunque teóricamente este método es de orden 1, en este caso nos da empiricamente un valor sin relación alguna con este, y que expresa la inestabilidad numérica de este método para esta ecuación.
+
+### Crank-Nicolson(O2)
+Vamos a calcular este orden de precisión para las ponderaciones Pond = 0,6; 0.8 y 1, es decir dandole cada vez más peso a la parte implícita (hasta calcular solo esto):
+```{r}
+for (j in 1:3){
+  if (j==1){
+    Pond <- 0.6
+  }
+  if (j==2){
+    Pond <- 0.8
+  }
+  if (j==3){
+    Pond <- 1
+  }
+  for (i in 1:2) {
+    h <- h1
+    if (i==2){
+      h <- h2
+    }
+    C <- 1000000 #concentración de cenizas inicial
+    C_prima <- -1000
+    x <- 0 #posición inicial
+    
+    A <- matrix(c(-1, Pond*h, (Pond*h)*(K/D), (Pond*h)*(U/D)-1), nrow = 2, ncol = 2, byrow = TRUE)
+    m21 <- A[2,1]/A[1,1]
+    A[2,] <- A[2,]-m21*A[1,]
+    Lower <- matrix(c(1, 0, m21, 1), nrow = 2, ncol = 2, byrow = TRUE)
+    Upper <- A
+    n <- 0 #cantidad de avances
+    C_calculadas <- c(C)
+    C_prima_calculadas <- c(C_prima)
+    x_calculadas <- c(x)
+    while (x<1){
+      b <- matrix(c((-C-((1-Pond)*h)*C_prima), (-((1-Pond)*h)*(K/D)*C-(((1-Pond)*h)*(U/D)+1)*C_prima)), nrow = 2, ncol = 1, byrow = TRUE)
+      #sistema Ly=b
+      vector_y <- matrix(c(b[1,], # y1
+                         b[2,]-Lower[2,1]*b[1,]), # y2
+                         nrow = 2, ncol = 1, byrow = TRUE)
+      #Sistema Ux=y
+      vector_x <- matrix(c((vector_y[1,]-Upper[1,2]*(vector_y[2,]/Upper[2, 2]))/Upper[1,1], # u_{n+1} (C)
+                           vector_y[2,]/Upper[2, 2]), # v_{n+1} (C')
+                           nrow = 2, ncol = 1, byrow = TRUE)
+      #Valores de la concentración de cenizas y de su derivada en la posición x
+      x <- x+h
+      n <- n+1
+      C <- vector_x[1,]
+      C_prima <- vector_x[2,]
+    }
+    if (h==1){
+      error_abs_h1_CN <- C-C_analitica[11]
+    }
+    if (h==0.5){
+      error_abs_h2_CN <- C-C_analitica[11] 
+    }
+  }
+  if (j==1){
+    p_CN_Pond0.6 <- log(error_abs_h2_CN/error_abs_h1_CN)/log(h2/h1)
+  }
+  if (j==2){
+    p_CN_Pond0.8 <- log(error_abs_h2_CN/error_abs_h1_CN)/log(h2/h1)
+  }
+  if (j==3){
+    p_CN_Pond1 <- log(error_abs_h2_CN/error_abs_h1_CN)/log(h2/h1)
+  }
+}
+paste("El orden de precisión experimental para Crank-Nicolson con Pond=0,6 es:", p_CN_Pond0.6)
+paste("El orden de precisión experimental para Crank-Nicolson con Pond=0,8 es:", p_CN_Pond0.8)
+paste("El orden de precisión experimental para Crank-Nicolson con Pond=1 es:", p_CN_Pond1)
+```
+
+Ahora podemos ver, y contrario a lo que creiamos en un principio, que *al aumentar el peso de la parte implícita de CN, logramos aumentar el orden de precisión de este método. El cual teoricamente es de orden dos, pero dada la inestabilidad de la parte explícita de CN para este caso, tenemos que experimentalmente ni siquiera llega a el orden de precisión 1*.
+
+
+## Tipos de errores involucrados en la resolución del problema numérico y la importancia/efecto de cada uno.
+
+En este problema hay involucrados diversos tipos de errores. En princio, el principal y que más nos interesa lograr disminuir con estos métodos numéricos de resolución de ecuaciones diferenciales, es el error de truncamiento. El mismo surge a partir de la discretización de algo infinito, en este caso, la función concentración de cenizas y su derivada, ambas en función de la posición. como ya se explicó, este será proporcional al paso de cálculo usado elevado al orden de precisión. Por esto, como ya hablamos, al reducir el paso logramos reducir el error.
+En estas discretizaciones tambien tendremos tanto un error de truncamiento local, surgido en cada avance de cálculo realizado. Y un error global, que será la suma de los locales. Entonces, cuando durante el análsis hablamos de que es necesario la reducción asintótica del error local en cada paso, nos referimos a que este error de truncamiento debe ser cada vez más chico para lograr una solución numéricamente estable (de ahí la condición de estabilidad). Si no fuera así, tendríamos un crecimiento lineal (siempre aumenta lo mismo) o incluso exponencial en el error local, y esto es lo que nos lleva a la inestabilidad de la solución.
+Por otra parte, tenemos los errores de redondeo, propios de las limitaciones de memoria de la computadora (mantisa limitada) y que conllevan errores de cálculo. Los mismos los intentamos disminuir lo más posible al resolver, por ejemplo, este problema, donde tuvimos sistemas de ecuaciones lineales, y al aplicar un método directo como la Eliminación Gaussiana usamos como herramienta el Pivoteo Parcial para apaciguar este error.
+
+
+
